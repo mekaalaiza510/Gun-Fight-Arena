@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Rivals</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { margin: 0; padding: 0; background-color: #0b0b10; width: 100vw; height: 100vh; overflow: hidden; font-family: monospace; user-select: none; }
+        canvas { display: block; width: 100vw; height: 100vh; image-rendering: pixelated; }
+        #ui { position: absolute; top: 20px; left: 20px; color: #00ff66; font-size: 22px; text-shadow: 2px 2px #000; font-weight: bold; pointer-events: none; z-index: 10; }
+        #crosshair { position: absolute; top: 50%; left: 50%; width: 10px; height: 10px; border: 2px solid #00ff66; transform: translate(-50%, -50%); border-radius: 50%; pointer-events: none; z-index: 10; }
+        #state-display { position: absolute; top: 55px; left: 20px; color: #00ffff; font-size: 16px; font-weight: bold; text-shadow: 1px 1px #000; pointer-events: none; }
+        
+        #menu-overlay { 
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; 
+            background: rgba(10, 10, 15, 0.9); display: flex; flex-direction: column; 
+            justify-content: center; align-items: center; z-index: 100; text-align: center; color: #fff;
+        }
+        .btn { 
+            padding: 15px 35px; background: #e94560; border: none; color: white; 
+            font-size: 20px; font-weight: bold; border-radius: 4px; cursor: pointer; 
+            margin-top: 25px; letter-spacing: 2px; box-shadow: 0 0 15px rgba(233,69,96,0.4);
+            transition: transform 0.1s ease;
+        }
+        .btn:hover { transform: scale(1.05); background: #ff5270; }
+    </style>
+</head>
+<body>
+
+    <div id="ui">KILLS: <span id="score">0</span> | HP: <span id="hp">100</span></div>
+    <div id="state-display">STANCE: PAUSED</div>
+    <div id="crosshair"></div>
+    
+    <div id="menu-overlay">
+        <h1 style="color: #e94560; font-size: 45px; margin-bottom: 5px; text-shadow: 3px 3px #000;">3D RIVALS ARENA</h1>
+        <p style="color: #00ffff; font-size: 14px; margin-top: 0;">Kinetic Engine v1.6 Active</p>
+        
+        <div style="background: rgba(255,255,255,0.05); padding: 20px; border-radius: 8px; border: 1px solid #333; text-align: left; max-width: 450px; line-height: 1.6;">
+            <b style="color: #00ff66;">CONTROLS SCHEMATIC:</b><br>
+            • <b style="color: #fff;">W, A, S, D</b> — Translate Position<br>
+            • <b style="color: #fff;">Trackpad / Mouse</b> — Panoramic Look Control<br>
+            • <b style="color: #fff;">Left Click</b> — Fire Plasma Blaster<br>
+            • <b style="color: #00ffff;">Hold Shift</b> — Hold-to-Crouch (Minecraft style)<br>
+            • <b style="color: #00ffff;">Tap Caps Lock</b> — Toggle Crouch On/Off<br>
+            • <b style="color: #fff;">W + (Shift or Caps Lock)</b> — Tactical Slide Routine<br>
+            • <b style="color: #e94560;">Press ESC Key</b> — View Pause Menu Layer
+        </div>
+        
+        <button class="btn" id="resumeBtn">CLICK TO PLAY</button>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById("gameCanvas");
+        const ctx = canvas.getContext("2d");
+        const menuOverlay = document.getElementById("menu-overlay");
+        const resumeBtn = document.getElementById("resumeBtn");
+
+        function resizeCanvas() {
+            canvas.width = window.innerWidth / 2; 
+            canvas.height = window.innerHeight / 2;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // --- MAP LAYOUT ---
+        const mapSize = 16;
+        const map = [
+            1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+            1,0,0,0,0,0,1,0,0,0,0,0,0,0,0,1,
+            1,0,0,0,0,0,1,0,0,0,0,0,0,0,0,1,
+            1,0,0,0,0,0,0,0,0,0,1,1,0,0,0,1,
+            1,0,0,0,0,0,0,0,0,0,1,1,0,0,0,1,
+            1,0,0,1,1,0,0,0,0,0,0,0,0,0,0,1,
+            1,0,0,1,1,0,0,0,0,0,0,0,0,0,0,1,
+            1,0,0,0,0,0,0,0,0,0,0,0,1,1,0,1,
+            1,0,0,0,0,0,0,0,0,0,0,0,1,1,0,1,
+            1,0,0,0,0,0,1,1,0,0,0,0,0,0,0,1,
+            1,0,0,0,0,0,1,1,0,0,0,0,0,0,0,1,
+            1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+            1,0,0,1,1,0,0,0,0,0,1,1,0,0,0,1,
+            1,0,0,1,1,0,0,0,0,0,1,1,0,0,0,1,
+            1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+            1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
+        ];
+
+        // --- STATE PACKETS ---
+        let player = {
+            x: 3.5, y: 3.5, 
+            angle: 0, hp: 100, score: 0,
+            baseSpeed: 0.07, currentSpeed: 0.07,
+            
+            // Dual Movement Controls Tracker
+            toggleCrouchActive: false, 
+            holdCrouchActive: false,    
+            isSliding: false,
+            slideTimer: 0, slideDirX: 0, slideDirY: 0,
+            eyeHeightOffset: 0 
+        };
+
+        let isPaused = true; 
+        let weapon = { recoilY: 0, muzzleFlashFrame: 0 };
+        let npcs = [];
+        let bullets = [];
+
+        // --- POINTER LOCK CONTROLS ---
+        resumeBtn.addEventListener('click', () => {
+            canvas.requestPointerLock();
+        });
+
+        document.addEventListener('pointerlockchange', () => {
+            if (document.pointerLockElement === canvas) {
+                isPaused = false;
+                menuOverlay.style.display = "none";
+            } else {
+                isPaused = true;
+                menuOverlay.style.display = "flex";
+                keys = {};
+                player.holdCrouchActive = false; 
+            }
+        });
+
+        window.addEventListener('mousemove', (e) => {
+            if (isPaused) return; 
+            player.angle += e.movementX * 0.0035;
+            while (player.angle < 0) player.angle += Math.PI * 2;
+            while (player.angle > Math.PI * 2) player.angle -= Math.PI * 2;
+        });
+
+        // --- MERGED KINETIC INPUT ENGINE ---
+        let keys = {};
+        window.addEventListener('keydown', (e) => { 
+            if (isPaused) return;
+            
+            let key = e.key.toLowerCase();
+            
+            // 1. Evaluate Slide Intent (Triggers if moving forward on either input push)
+            let isCrouchKeyPress = (e.key === "CapsLock" || e.key === "Shift");
+            let currentlyCrouched = (player.toggleCrouchActive || player.holdCrouchActive);
+
+            if (isCrouchKeyPress && keys['w'] && !player.isSliding && !currentlyCrouched) {
+                player.isSliding = true;
+                player.slideTimer = 25; 
+                player.slideDirX = Math.cos(player.angle);
+                player.slideDirY = Math.sin(player.angle);
+            } else {
+                // 2. Parse Regular Crouch Modifiers
+                if (e.key === "CapsLock") {
+                    e.preventDefault(); 
+                    player.toggleCrouchActive = !player.toggleCrouchActive;
+                }
+                if (e.key === "Shift") {
+                    player.holdCrouchActive = true;
+                }
+            }
+            
+            keys[key] = true; 
+            if (e.key === "Shift") keys['shift'] = true;
+        });
+
+        window.addEventListener('keyup', (e) => { 
+            let key = e.key.toLowerCase();
+            keys[key] = false; 
+            
+            if (e.key === "Shift") {
+                keys['shift'] = false;
+                player.holdCrouchActive = false; // Drops down tracking immediately on release
+            }
+        });
+        
+        window.addEventListener('mousedown', (e) => { 
+            if (!isPaused && player.hp > 0 && e.button === 0) {
+                spawnBullet(player.x, player.y, player.angle, true); 
+                weapon.recoilY = 15;
+                weapon.muzzleFlashFrame = 4;
+            }
+        });
+
+        function generateSafeNPCCoords() {
+            let safe = false; let rx, ry;
+            while(!safe) {
+                rx = Math.floor(Math.random() * (mapSize - 2)) + 1;
+                ry = Math.floor(Math.random() * (mapSize - 2)) + 1;
+                if(map[ry * mapSize + rx] === 0) {
+                    let distToPlayer = Math.sqrt(Math.pow((rx + 0.5) - player.x, 2) + Math.pow((ry + 0.5) - player.y, 2));
+                    if (distToPlayer > 4.0) safe = true;
+                }
+            }
+            return { x: rx + 0.5, y: ry + 0.5 };
+        }
+
+        function initEnemies() {
+            npcs = [];
+            for(let i = 0; i < 4; i++) {
+                let coords = generateSafeNPCCoords();
+                npcs.push({ x: coords.x, y: coords.y, hp: 20, shootCooldown: Math.random() * 60 });
+            }
+        }
+
+        function spawnBullet(startX, startY, angle, isPlayerOwned) {
+            bullets.push({ x: startX, y: startY, dirX: Math.cos(angle), dirY: Math.sin(angle), isPlayer: isPlayerOwned, life: 120 });
+        }
+
+        // --- CORE PROCESS MATRIX ---
+        function updateAndRender() {
+            if (isPaused) {
+                document.getElementById("state-display").innerText = "STANCE: PAUSED";
+                requestAnimationFrame(updateAndRender);
+                return;
+            }
+
+            if (weapon.recoilY > 0) weapon.recoilY -= 1.5;
+            if (weapon.muzzleFlashFrame > 0) weapon.muzzleFlashFrame--;
+
+            // Stance Tracking System
+            let stateText = "STANCE: STANDING";
+            let crouchConditionActive = (player.toggleCrouchActive || player.holdCrouchActive);
+
+            if (player.isSliding) {
+                stateText = "STANCE: ⚡ SLIDING (IMMUNE)";
+                player.eyeHeightOffset = -40; 
+                player.currentSpeed = player.baseSpeed * 1.8; 
+                player.slideTimer--;
+                if (player.slideTimer <= 0) {
+                    player.isSliding = false;
+                    // Retain toggle position if they were sliding via toggling caps lock
+                    if (!player.holdCrouchActive) player.toggleCrouchActive = true;
+                }
+            } else if (crouchConditionActive) {
+                stateText = "STANCE: 🛑 CROUCHED (DEFENSE+)";
+                player.eyeHeightOffset = -22; 
+                player.currentSpeed = player.baseSpeed * 0.45; 
+            } else {
+                player.eyeHeightOffset = 0; 
+                player.currentSpeed = player.baseSpeed;
+            }
+            document.getElementById("state-display").innerText = stateText;
+
+            // Positioning vectors calculation
+            let moveX = 0; let moveY = 0;
+            if (player.isSliding) {
+                moveX = player.slideDirX * player.currentSpeed;
+                moveY = player.slideDirY * player.currentSpeed;
+            } else {
+                if (keys['w']) { moveX += Math.cos(player.angle) * player.currentSpeed; moveY += Math.sin(player.angle) * player.currentSpeed; }
+                if (keys['s']) { moveX -= Math.cos(player.angle) * player.currentSpeed; moveY -= Math.sin(player.angle) * player.currentSpeed; }
+                if (keys['a']) { moveX += Math.sin(player.angle) * player.currentSpeed; moveY -= Math.cos(player.angle) * player.currentSpeed; }
+                if (keys['d']) { moveX -= Math.sin(player.angle) * player.currentSpeed; moveY += Math.cos(player.angle) * player.currentSpeed; }
+            }
+
+            if (map[Math.floor(player.y) * mapSize + Math.floor(player.x + moveX * 1.5)] === 0) player.x += moveX;
+            if (map[Math.floor(player.y + moveY * 1.5) * mapSize + Math.floor(player.x)] === 0) player.y += moveY;
+
+            // Environmental Graphics
+            let halfHeight = canvas.height / 2;
+            let horizonShift = player.eyeHeightOffset; 
+            ctx.fillStyle = "#14141f"; ctx.fillRect(0, 0, canvas.width, halfHeight + horizonShift);
+            ctx.fillStyle = "#0a0a0d"; ctx.fillRect(0, halfHeight + horizonShift, canvas.width, canvas.height);
+
+            // Raycaster Render Engine
+            const fov = Math.PI / 3; const numRays = canvas.width;
+            let depthBuffer = new Array(numRays).fill(16);
+
+            for (let i = 0; i < numRays; i++) {
+                let rayAngle = (player.angle - fov / 2) + (i / numRays) * fov;
+                let distanceToWall = 0; let hitWall = false;
+                let eyeX = Math.cos(rayAngle); let eyeY = Math.sin(rayAngle);
+
+                while (!hitWall && distanceToWall < 16) {
+                    distanceToWall += 0.04;
+                    let checkX = Math.floor(player.x + eyeX * distanceToWall);
+                    let checkY = Math.floor(player.y + eyeY * distanceToWall);
+                    if (checkX < 0 || checkX >= mapSize || checkY < 0 || checkY >= mapSize) { hitWall = true; distanceToWall = 16; }
+                    else if (map[checkY * mapSize + checkX] > 0) hitWall = true;
+                }
+
+                let correctedDist = distanceToWall * Math.cos(rayAngle - player.angle);
+                depthBuffer[i] = correctedDist;
+
+                let wallProjectedSize = canvas.height / correctedDist;
+                let ceiling = (halfHeight + horizonShift) - wallProjectedSize;
+                let floor = (halfHeight + horizonShift) + wallProjectedSize;
+
+                let colorValue = Math.max(10, Math.min(130, 150 - (correctedDist * 11)));
+                ctx.fillStyle = `rgb(${colorValue}, ${colorValue + 8}, ${colorValue + 20})`;
+                ctx.fillRect(i, ceiling, 1, floor - ceiling);
+            }
+
+            // Projectiles Processing Matrix
+            for (let b = bullets.length - 1; b >= 0; b--) {
+                let bullet = bullets[b];
+                bullet.x += bullet.dirX * 0.22; bullet.y += bullet.dirY * 0.22; bullet.life--;
+
+                if (map[Math.floor(bullet.y) * mapSize + Math.floor(bullet.x)] > 0 || bullet.life <= 0) {
+                    bullets.splice(b, 1); continue;
+                }
+
+                if (bullet.isPlayer) {
+                    for (let n = npcs.length - 1; n >= 0; n--) {
+                        let npc = npcs[n];
+                        let hDist = Math.sqrt(Math.pow(bullet.x - npc.x, 2) + Math.pow(bullet.y - npc.y, 2));
+                        if (hDist < 0.4) {
+                            npc.hp -= 10; bullets.splice(b, 1);
+                            if (npc.hp <= 0) {
+                                player.score++; document.getElementById("score").innerText = player.score;
+                                let newCoords = generateSafeNPCCoords();
+                                npcs[n] = { x: newCoords.x, y: newCoords.y, hp: 20, shootCooldown: 40 };
+                            }
+                            break;
+                        }
+                    }
+                } else {
+                    let pDist = Math.sqrt(Math.pow(bullet.x - player.x, 2) + Math.pow(bullet.y - player.y, 2));
+                    if (pDist < 0.35) {
+                        bullets.splice(b, 1);
+                        if (player.isSliding) continue;
+                        else if (crouchConditionActive) player.hp -= 2; 
+                        else player.hp -= 6; 
+
+                        document.getElementById("hp").innerText = Math.max(0, Math.floor(player.hp));
+                        
+                        if (player.hp <= 0) {
+                            document.exitPointerLock();
+                            alert("ELIMINATED! Final Score: " + player.score);
+                            player.hp = 100; player.score = 0; player.x = 3.5; player.y = 3.5; 
+                            player.toggleCrouchActive = false; player.holdCrouchActive = false;
+                            document.getElementById("score").innerText = "0";
+                            document.getElementById("hp").innerText = "100";
+                            initEnemies(); bullets = [];
+                        }
+                        continue;
+                    }
+                }
+
+                let bDx = bullet.x - player.x; let bDy = bullet.y - player.y; let bDist = Math.sqrt(bDx*bDx + bDy*bDy);
+                let bAngle = Math.atan2(bDy, bDx) - player.angle;
+                while (bAngle < -Math.PI) bAngle += Math.PI * 2;
+                while (bAngle > Math.PI) bAngle -= Math.PI * 2;
+
+                if (Math.abs(bAngle) < fov && bDist > 0.2 && bDist < depthBuffer[Math.floor(((0.5 + bAngle / fov) * canvas.width))]) {
+                    let bSize = canvas.height / bDist / 6;
+                    let bScreenX = (0.5 + bAngle / fov) * canvas.width;
+                    ctx.fillStyle = bullet.isPlayer ? "#00ffcc" : "#ffaa00";
+                    ctx.beginPath(); ctx.arc(bScreenX, halfHeight + horizonShift, Math.max(2, bSize), 0, Math.PI * 2); ctx.fill();
+                }
+            }
+
+            // Render Ranged Arena Entities
+            npcs.forEach((npc) => {
+                let dx = npc.x - player.x; let dy = npc.y - player.y; let dist = Math.sqrt(dx*dx + dy*dy);
+                let enemyAngle = Math.atan2(dy, dx); 
+                
+                if (dist > 4.5) {
+                    let ndx = Math.cos(enemyAngle) * 0.025; let ndy = Math.sin(enemyAngle) * 0.025;
+                    if(map[Math.floor(npc.y) * mapSize + Math.floor(npc.x + ndx * 2.0)] === 0) npc.x += ndx;
+                    if(map[Math.floor(npc.y + ndy * 2.0) * mapSize + Math.floor(npc.x)] === 0) npc.y -= ndy;
+                } else if (dist < 3.0) {
+                    let ndx = Math.cos(enemyAngle) * 0.02; let ndy = Math.sin(enemyAngle) * 0.02;
+                    if(map[Math.floor(npc.y) * mapSize + Math.floor(npc.x - ndx * 2.0)] === 0) npc.x -= ndx;
+                    if(map[Math.floor(npc.y - ndy * 2.0) * mapSize + Math.floor(npc.x)] === 0) npc.y -= ndy;
+                }
+
+                npc.shootCooldown--;
+                if (npc.shootCooldown <= 0 && dist < 10) {
+                    let targetAngle = Math.atan2(player.y - npc.y, player.x - npc.x);
+                    spawnBullet(npc.x, npc.y, targetAngle, false);
+                    npc.shootCooldown = 50 + Math.random() * 40; 
+                }
+
+                let npcRelAngle = Math.atan2(dy, dx) - player.angle;
+                while (npcRelAngle < -Math.PI) npcRelAngle += Math.PI * 2;
+                while (npcRelAngle > Math.PI) npcRelAngle -= Math.PI * 2;
+
+                if (Math.abs(npcRelAngle) < fov * 1.2 && dist > 0.3) {
+                    let spriteHeight = canvas.height / dist;
+                    let spriteWidth = spriteHeight / 1.4; 
+                    let spriteScreenX = (0.5 + npcRelAngle / fov) * canvas.width;
+                    let spriteScreenY = halfHeight + horizonShift;
+
+                    let startX = Math.floor(spriteScreenX - spriteWidth / 2);
+                    let endX = Math.floor(spriteScreenX + spriteWidth / 2);
+
+                    for (let x = startX; x < endX; x++) {
+                        if (x >= 0 && x < canvas.width && depthBuffer[x] > dist) { 
+                            ctx.fillStyle = "#e94560"; 
+                            ctx.fillRect(x, spriteScreenY - spriteHeight / 2, 1, spriteHeight);
+                            if (x === startX || x === endX - 1) {
+                                ctx.fillStyle = "#8a1c30"; ctx.fillRect(x, spriteScreenY - spriteHeight / 2, 1, spriteHeight);
+                            }
+                        }
+                    }
+                }
+            });
+
+            // Active Weapon Overlay Rendering
+            let gunBaseX = canvas.width * 0.68;
+            let gunBaseY = canvas.height * 0.60 + weapon.recoilY + (horizonShift * 0.4); 
+            ctx.fillStyle = "#1e1e24"; ctx.fillRect(gunBaseX, gunBaseY, 30, 80);
+            ctx.fillStyle = "#2d3238"; ctx.fillRect(gunBaseX - 5, gunBaseY + 15, 36, 65);
+            ctx.fillStyle = "#4f5d65"; ctx.fillRect(gunBaseX + 8, gunBaseY - 20, 14, 40);
+            ctx.fillStyle = "#00ffcc"; ctx.fillRect(gunBaseX + 13, gunBaseY - 15, 4, 35);
+
+            if (weapon.muzzleFlashFrame > 0) {
+                ctx.fillStyle = "rgba(0, 255, 210, 0.9)";
+                ctx.beginPath(); ctx.arc(gunBaseX + 15, gunBaseY - 22, 18, 0, Math.PI * 2); ctx.fill();
+                ctx.fillStyle = "rgba(0, 255, 210, 0.08)"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+            }
+
+            requestAnimationFrame(updateAndRender);
+        }
+
+        initEnemies();
+        updateAndRender();
+    </script>
+</body>
+</html>
